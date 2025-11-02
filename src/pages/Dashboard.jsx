@@ -1,29 +1,52 @@
-import { auth } from '../firebase';
-import { signOut } from 'firebase/auth';
-import { useState } from 'react';
+import { useState } from "react";
+import { firebaseAuth } from "../firebase-config";
+import { signOut } from "firebase/auth";
 
 export default function Dashboard() {
-  const [text, setText] = useState('');
-  const [result, setResult] = useState('');
+  const [text, setText] = useState("");
+  const [result, setResult] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const logout = () => signOut(firebaseAuth);
 
   const analyze = async () => {
-    const r = await fetch('/api/analyze', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ text })
-    });
-    const data = await r.json();
-    setResult(data.result);
+    if (!text) return;
+    setLoading(true);
+    setResult("");
+
+    try {
+      const r = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      const data = await r.json();
+      setResult(data.result || "No result");
+    } catch {
+      setResult("?? Error analyzing message");
+    }
+
+    setLoading(false);
   };
 
   return (
-    <div className='p-8 max-w-xl mx-auto text-center'>
-      <h1 className='text-3xl text-aura mb-6'>Romantic Vibe Analyzer</h1>
-      <textarea className='w-full p-3 bg-gray-900 border border-purple-800'
-        rows='5' placeholder='Paste message…'
-        value={text} onChange={e=>setText(e.target.value)} />
-      <button onClick={analyze} className='bg-aura p-3 rounded mt-4'>Analyze</button>
-      {result && <div className='mt-6 text-purple-300'>{result}</div>}
-      <button onClick={() => signOut(auth)} className='text-red-400 mt-10'>Logout</button>
+    <div style={{ maxWidth: 600, margin: "40px auto", textAlign: "center" }}>
+      <h2 style={{ fontSize: "26px", color: "#C084FC" }}>Romantic Vibe Analyzer ??</h2>
+      <textarea
+        style={{ width: "100%", height: 120, marginTop: 20 }}
+        placeholder="Paste message here..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <button onClick={analyze} disabled={loading}>
+        {loading ? "Reading their heart..." : "Analyze Message"}
+      </button>
+      {result && (
+        <div style={{ marginTop: 20, padding: 15, border: "1px solid purple" }}>
+          {result}
+        </div>
+      )}
+      <button style={{ marginTop: 25 }} onClick={logout}>Logout</button>
     </div>
   );
 }
