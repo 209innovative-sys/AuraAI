@@ -15,38 +15,40 @@ export default function Dashboard() {
     setResult("");
 
     try {
-      const r = await fetch("/api/analyze", {
+      const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
       });
-      const data = await r.json();
-      setResult(data.result || "No result");
+      const data = await res.json();
+      setResult(data.result || "No response");
     } catch {
-      setResult("?? Error analyzing message");
+      setResult("?? Analyzer Failed");
     }
 
     setLoading(false);
   };
 
   return (
-    <div style={{ maxWidth: 600, margin: "40px auto", textAlign: "center" }}>
-      <h2 style={{ fontSize: "26px", color: "#C084FC" }}>Romantic Vibe Analyzer ??</h2>
+    <div style={{ maxWidth: "600px", margin: "0 auto", marginTop: "60px", textAlign: "center" }}>
+      <h1 style={{ color: "#c084fc" }}>Romantic Vibe Analyzer ??</h1>
       <textarea
-        style={{ width: "100%", height: 120, marginTop: 20 }}
+        style={{ width: "100%", height: "120px", marginTop: "20px" }}
         placeholder="Paste message here..."
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
-      <button onClick={analyze} disabled={loading}>
-        {loading ? "Reading their heart..." : "Analyze Message"}
+      <button onClick={analyze} disabled={loading} style={{ marginTop: "20px", width: "100%" }}>
+        {loading ? "Reading vibes..." : "Analyze Message"}
       </button>
+
       {result && (
-        <div style={{ marginTop: 20, padding: 15, border: "1px solid purple" }}>
+        <div style={{ marginTop: "20px", padding: "15px", border: "1px solid purple" }}>
           {result}
         </div>
       )}
-      <button style={{ marginTop: 25 }} onClick={logout}>Logout</button>
+
+      <button onClick={logout} style={{ marginTop: "30px" }}>Logout</button>
     </div>
   );
 }
