@@ -1,5 +1,5 @@
 import { Navigate } from "react-router-dom";
-import { firebaseAuth } from "../firebase/firebase";
+import { firebaseAuth } from "../firebase-config";
 
 export default function ProtectedRoute({ children }) {
   const user = firebaseAuth.currentUser;
