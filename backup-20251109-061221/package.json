@@ -1,0 +1,90 @@
+{
+    "name":  "auraai-live",
+    "version":  "1.0.0",
+    "private":  true,
+    "scripts":  {
+                    "dev":  "vite",
+                    "build":  "vite build",
+                    "preview":  "vite preview --port 5173"
+                },
+    "dependencies":  {
+                         "Count":  7,
+                         "IsReadOnly":  false,
+                         "Keys":  [
+                                      "Count",
+                                      "IsReadOnly",
+                                      "Keys",
+                                      "Values",
+                                      "IsFixedSize",
+                                      "SyncRoot",
+                                      "IsSynchronized"
+                                  ],
+                         "Values":  [
+                                        7,
+                                        false,
+                                        [
+                                            "Count",
+                                            "IsReadOnly",
+                                            "Keys",
+                                            "Values",
+                                            "IsFixedSize",
+                                            "SyncRoot",
+                                            "IsSynchronized"
+                                        ],
+                                        [
+                                            4,
+                                            false,
+                                            [
+                                                "firebase",
+                                                "react",
+                                                "react-dom",
+                                                "react-router-dom"
+                                            ],
+                                            [
+                                                "^11.0.0",
+                                                "^18.3.1",
+                                                "^18.3.1",
+                                                "^6.28.0"
+                                            ],
+                                            false,
+                                            {
+
+                                            },
+                                            false
+                                        ],
+                                        false,
+                                        {
+
+                                        },
+                                        false
+                                    ],
+                         "IsFixedSize":  false,
+                         "SyncRoot":  {
+
+                                      },
+                         "IsSynchronized":  false
+                     },
+    "devDependencies":  {
+                            "Count":  5,
+                            "IsReadOnly":  false,
+                            "Keys":  [
+                                         "@vitejs/plugin-react-swc",
+                                         "autoprefixer",
+                                         "postcss",
+                                         "tailwindcss",
+                                         "vite"
+                                     ],
+                            "Values":  [
+                                           "^3.7.0",
+                                           "^10.4.20",
+                                           "^8.4.47",
+                                           "^3.4.13",
+                                           "^6.0.0"
+                                       ],
+                            "IsFixedSize":  false,
+                            "SyncRoot":  {
+
+                                         },
+                            "IsSynchronized":  false
+                        }
+}
