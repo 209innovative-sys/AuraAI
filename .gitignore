@@ -1,10 +1,21 @@
+# dependencies
 node_modules
-dist
-.DS_Store
+server/node_modules
 
+# builds / caches
+dist
+.vite
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# env & secrets
 .env
 .env.*
 !.env.example
-
-server/node_modules
 server/.env
+
+# tools / misc
+*.byte
