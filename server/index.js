@@ -1,71 +1,60 @@
-import "dotenv/config"
-import express from "express"
-import cors from "cors"
-import { z } from "zod"
-import OpenAI from "openai"
+import express from "express";
+import cors from "cors";
+import "dotenv/config";
+import OpenAI from "openai";
 
-const app = express()
+const app = express();
+const PORT = process.env.PORT || 4000;
 
-const allowedOrigin = process.env.ALLOWED_ORIGIN || "*"
-app.use(cors({ origin: allowedOrigin }))
-app.use(express.json({ limit: "1mb" }))
+app.use(cors());
+app.use(express.json());
 
-const openaiApiKey = process.env.OPENAI_API_KEY
-if (!openaiApiKey) {
-  console.warn("[WARN] OPENAI_API_KEY not set. /analyze will fail until configured.")
-}
-const openai = new OpenAI({ apiKey: openaiApiKey })
+// Simple health check for your own sanity
+app.get("/", (req, res) => {
+  res.json({ ok: true, service: "AuraAI backend", status: "running" });
+});
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, uptime: process.uptime() })
-})
+// Init OpenAI client using your server-side key
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-const AnalyzeSchema = z.object({
-  text: z.string().min(1).max(8000)
-})
-
+// Main endpoint your frontend calls
 app.post("/analyze", async (req, res) => {
   try {
-    const parsed = AnalyzeSchema.safeParse(req.body)
-    if (!parsed.success) {
-      return res.status(400).json({ error: "Invalid input", details: parsed.error.flatten() })
+    const { text } = req.body || {};
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({ error: "No text provided" });
     }
 
-    const { text } = parsed.data
-
-    if (!openaiApiKey) {
-      return res.status(500).json({ error: "Server missing OPENAI_API_KEY" })
-    }
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const completion = await client.chat.completions.create({
+      model: "gpt-4.1-mini",
       messages: [
         {
           role: "system",
-          content: "You analyze emotional tone, sentiment, and interpersonal dynamics succinctly."
+          content:
+            "You are an assistant that analyzes the emotional tone, vibe, and intent of user text. Respond with a short, clear analysis.",
         },
-        {
-          role: "user",
-          content: `Analyze the emotional tone and vibe of this text:\n\n${text}`
-        }
+        { role: "user", content: text },
       ],
-      temperature: 0.3,
-      max_tokens: 300
-    })
+      max_tokens: 200,
+    });
 
-    const output = completion.choices?.[0]?.message?.content ?? "(no content)"
+    const analysis = completion.choices?.[0]?.message?.content || "";
 
-    return res.json({
+    res.json({
       ok: true,
-      analysis: output
-    })
+      analysis,
+    });
   } catch (err) {
-    console.error("Analyze error:", err)
-    return res.status(500).json({ error: "Internal error" })
+    console.error("Error in /analyze:", err);
+    res.status(500).json({
+      error: "Server error",
+      detail: err.message,
+    });
   }
-})
+});
 
-const port = process.env.PORT || 4000
-app.listen(port, () => {
-  console.log(`Server listening on http://localhost:${port}`)
-})
+app.listen(PORT, () => {
+  console.log(`AuraAI backend running on port ${PORT}`);
+});
