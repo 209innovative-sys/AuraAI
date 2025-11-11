@@ -2,5 +2,11 @@
   "buildCommand": "npm run build",
   "ignoreCommand": "",
   "installCommand": "npm install",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
