@@ -1,0 +1,214 @@
+# patch-auraai.ps1
+# Safe, targeted patcher for AuraAI (server/index.js and SignIn.jsx)
+# - No StrictMode
+# - No global changes
+# - Creates timestamped backups
+
+$ErrorActionPreference = 'Stop'
+
+function Backup-File($Path) {
+  if (Test-Path $Path) {
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+    $bak = "$Path.$stamp.backup"
+    Copy-Item -LiteralPath $Path -Destination $bak -Force
+    Write-Host "Backed up $Path -> $bak"
+  } else {
+    Write-Host "Note: $Path not found (will create new)."
+  }
+}
+
+# Verify repo root
+$root = "C:\Users\Alexi\Desktop\auraai-live"
+if (-not (Test-Path $root)) { throw "Repo root not found: $root" }
+Set-Location $root
+
+# Targets
+$serverFile = Join-Path $root "server\index.js"
+$signinFile = Join-Path $root "src\components\auth\SignIn.jsx"
+
+# Backups
+Backup-File $serverFile
+Backup-File $signinFile
+
+# ----- Write server/index.js -----
+$serverContent = @'
+import express from "express";
+import cors from "cors";
+import "dotenv/config";
+import OpenAI from "openai";
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+// Explicit CORS (preflight + headers)
+const corsOptions = {
+  origin: true, // reflect request origin
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // handle preflight explicitly
+
+app.use(express.json());
+
+// Health
+app.get("/", (req, res) => {
+  res.json({ ok: true, service: "AuraAI backend", status: "running" });
+});
+
+// OpenAI client (server-side key only; set OPENAI_API_KEY in server/.env or Render)
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// Analyze endpoint (POST only)
+app.post("/analyze", async (req, res) => {
+  try {
+    const { text } = req.body || {};
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({ error: "No text provided" });
+    }
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an assistant that analyzes the emotional tone, vibe, and intent of user text. Respond with a short, clear analysis.",
+        },
+        { role: "user", content: text },
+      ],
+      max_tokens: 200,
+    });
+
+    const analysis = completion.choices?.[0]?.message?.content || "";
+
+    res.json({ ok: true, analysis });
+  } catch (err) {
+    console.error("Error in /analyze:", err);
+    res.status(500).json({
+      error: "Server error",
+      detail: err?.message || String(err),
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`AuraAI backend running on port ${PORT}`);
+});
+'@
+Set-Content -LiteralPath $serverFile -Value $serverContent -Encoding UTF8
+Write-Host "Wrote $serverFile"
+
+# ----- Write src/components/auth/SignIn.jsx -----
+$signinContent = @'
+import React, { useState, useEffect } from "react";
+import { auth, googleProvider } from "../../lib/firebase";
+import {
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+} from "firebase/auth";
+import { Link, useNavigate } from "react-router-dom";
+
+export default function SignIn() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const nav = useNavigate();
+
+  // If we returned from a redirect flow, finalize and navigate.
+  useEffect(() => {
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          nav("/dashboard");
+        }
+      })
+      .catch(() => {
+        /* ignore if no redirect occurred */
+      });
+  }, [nav]);
+
+  const onEmail = async (e) => {
+    e.preventDefault();
+    setErr("");
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      nav("/dashboard");
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onGoogle = async () => {
+    setErr("");
+    setBusy(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+      nav("/dashboard");
+    } catch (e) {
+      // Fallback to redirect only for popup-related issues
+      if (e?.code === "auth/popup-blocked" || e?.code === "auth/popup-closed-by-user") {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return; // redirect will reload; effect above will handle success
+        } catch (e2) {
+          setErr(e2.message);
+        }
+      } else {
+        setErr(e.message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 420, margin: "40px auto" }}>
+      <h2>Sign In</h2>
+      <form onSubmit={onEmail} style={{ display: "grid", gap: 12 }}>
+        <input
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <input
+          placeholder="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        <button disabled={busy} type="submit">
+          Sign In
+        </button>
+      </form>
+      <div style={{ marginTop: 12 }}>
+        <button disabled={busy} onClick={onGoogle}>
+          Sign In with Google
+        </button>
+      </div>
+      {err && <div style={{ color: "crimson", marginTop: 12 }}>{err}</div>}
+      <div style={{ marginTop: 12 }}>
+        No account? <Link to="/signup">Sign Up</Link>
+      </div>
+    </div>
+  );
+}
+'@
+Set-Content -LiteralPath $signinFile -Value $signinContent -Encoding UTF8
+Write-Host "Wrote $signinFile"
+
+Write-Host "`nDone. Next steps:"
+Write-Host "1) Local test backend:   cd server; npm start   → visit http://localhost:4000/"
+Write-Host "2) Local test frontend:  cd ..; npm run dev      → Analyze + Google Sign-In"
+Write-Host "3) Redeploy backend on Render (so CORS preflight fix is live)"
+Write-Host "4) Redeploy frontend:    npx vercel --prod"

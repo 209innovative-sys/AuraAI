@@ -1,0 +1,263 @@
+# fix - auraai - cors - auth.ps1
+# Purpose:
+# - Create / update a Firebase Functions "analyze" endpoint with strict CORS(Vercel + localhost).
+# - Handle OPTIONS preflight and set Access - Control - Allow - Origin correctly.
+# - Use OpenAI safely(server - side) for analysis(works if OPENAI_API_KEY is set in functions /.env).
+# - Build & deploy functions.
+# - Print exact Firebase Auth "Authorized domains" instructions.
+
+  $ErrorActionPreference = "Stop"
+
+# ----CONFIG: EDIT THESE IF NEEDED----
+  $FrontendOrigin   = "https://auraai-live-2309dqam1-phillips-projects-8e47c9d9.vercel.app"
+$LocalOrigin = "http://localhost:5173"
+$ProjectId = "auraai-live-328d2"
+$Region = "us-central1"
+$FunctionsUrlBase = "https://$Region-$ProjectId.cloudfunctions.net"
+# -------------------------------------
+
+  function Say($msg, $color = "Cyan") { Write - Host $msg - ForegroundColor $color }
+
+# 0) Sanity
+if (-not(Test - Path "functions")) {
+  Say "No 'functions' folder found in current directory: $(Get-Location). Create it or cd to your repo root." "Red"
+  exit 1
+}
+
+# 1) Ensure Node 20 engines, TS config, and deps in functions /
+  Push - Location functions
+
+# Create package.json if missing
+if (-not(Test - Path "package.json")) {
+  Say "Creating functions/package.json ..."
+    @'
+    {
+      "name": "auraai-live-functions",
+        "private": true,
+          "main": "lib/index.js",
+            "scripts": {
+        "build": "tsc",
+          "deploy": "firebase deploy --only functions"
+      },
+      "engines": {
+        "node": "20"
+      },
+      "dependencies": {
+        "cors": "^2.8.5",
+          "firebase-admin": "^12.6.0",
+            "firebase-functions": "^6.0.0",
+              "openai": "^4.67.0"
+      },
+      "devDependencies": {
+        "typescript": "^5.5.0"
+      }
+    }
+    '@ | Out-File -Encoding utf8 package.json -Force
+  } else {
+  Say "Patching functions/package.json to ensure engines + deps ..."
+    $pkg = Get - Content package.json - Raw | ConvertFrom - Json
+    if (-not $pkg.engines) { $pkg | Add - Member - NotePropertyName engines - NotePropertyValue(@{}) }
+    $pkg.engines.node = "20"
+    if (-not $pkg.dependencies) { $pkg | Add - Member - NotePropertyName dependencies - NotePropertyValue(@{}) }
+    $pkg.dependencies.cors = "^2.8.5"
+    $pkg.dependencies."firebase-admin" = "^12.6.0"
+    $pkg.dependencies."firebase-functions" = "^6.0.0"
+    $pkg.dependencies.openai = "^4.67.0"
+    if (-not $pkg.devDependencies) { $pkg | Add - Member - NotePropertyName devDependencies - NotePropertyValue(@{}) }
+    $pkg.devDependencies.typescript = "^5.5.0"
+      ($pkg | ConvertTo - Json - Depth 20) | Out - File - Encoding utf8 package.json
+  }
+
+# tsconfig
+if (-not(Test - Path "tsconfig.json")) {
+  Say "Creating functions/tsconfig.json ..."
+  @'
+  {
+    "compilerOptions": {
+      "module": "commonjs",
+        "target": "ES2020",
+          "lib": ["ES2020"],
+            "rootDir": "src",
+              "outDir": "lib",
+                "esModuleInterop": true,
+                  "strict": true
+    }
+  }
+  '@ | Out-File -Encoding utf8 tsconfig.json -Force
+}
+
+#.env example
+if (-not(Test - Path ".env")) {
+  Say "Creating functions/.env (edit with your secrets!)" "Yellow"
+  @"
+# Required:
+  OPENAI_API_KEY = sk - REPLACE_ME
+
+# Optional:
+# You can add any others you use(STRIPE_SECRET_KEY, etc.)
+# Client URL used in any redirects(not needed for this analyze endpoint):
+    CLIENT_URL = $FrontendOrigin
+  "@ | Out-File -Encoding utf8 .env -Force
+}
+
+# 2) Ensure src / structure
+if (-not(Test - Path "src")) { New - Item - ItemType Directory src | Out - Null }
+
+# 3) Write CORS util(strict allowlist)
+New - Item - ItemType Directory - Force src\util | Out - Null
+@"
+  import * as functions from "firebase-functions";
+import * as corsLib from "cors";
+
+const allowed = new Set < string > ([
+  "$FrontendOrigin",
+  "$LocalOrigin"
+]);
+
+export function withCors(handler: (req: functions.https.Request, res: functions.Response) => Promise<void> | void) {
+  const cors = corsLib({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // allow curl/postman
+      if (allowed.has(origin)) return cb(null, true);
+      return cb(new Error(\`Origin not allowed: \${origin}\`), false);
+    },
+    credentials: true
+  });
+
+  return (req: functions.https.Request, res: functions.Response) => {
+    const origin = (req.headers.origin || "") as string;
+    if (origin && allowed.has(origin)) {
+      res.set("Access-Control-Allow-Origin", origin);
+      res.set("Vary", "Origin");
+      res.set("Access-Control-Allow-Credentials", "true");
+      res.set("Access-Control-Allow-Headers", "Authorization,Content-Type");
+      res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    }
+
+    if (req.method === "OPTIONS") {
+      res.status(204).send("");
+      return;
+    }
+
+    cors(req, res, () => {
+      Promise.resolve(handler(req, res)).catch((err) => {
+        console.error("Handler error:", err);
+        if (!res.headersSent) {
+          res.status(400).send(typeof err?.message === "string" ? err.message : "Error");
+        }
+      });
+    });
+  };
+}
+"@ | Out-File -Encoding utf8 src\util\corsUtil.ts -Force
+
+# 4) OpenAI client
+@'
+import OpenAI from "openai";
+
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error("Missing OPENAI_API_KEY for analyze endpoint");
+}
+
+export const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+export async function analyzeText(input: string): Promise<string> {
+  if (!input || typeof input !== "string") {
+    throw new Error("Invalid input");
+  }
+  // keep it cheap + fast
+  if (input.length > 4000) input = input.slice(0, 4000);
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4.1-mini",
+    max_tokens: 300,
+    messages: [
+      { role: "system", content: "You are AuraAI: provide a concise vibe analysis with 3–6 bullet points (tone, risk, manipulation, trust, empathy)." },
+      { role: "user", content: input }
+    ]
+  });
+
+  return completion.choices[0]?.message?.content || "";
+}
+'@ | Out-File -Encoding utf8 src\openaiClient.ts -Force
+
+# 5) Analyze function with strict CORS
+@'
+import * as functions from "firebase-functions";
+import { withCors } from "./util/corsUtil";
+import { analyzeText } from "./openaiClient";
+
+export const analyze = functions.https.onRequest(
+  withCors(async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    let body: any = {};
+    try {
+      body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    } catch (_) {
+      // ignore, handled below
+    }
+
+    const input = body?.input;
+    if (!input || typeof input !== "string") {
+      res.status(400).send("Missing 'input' string in JSON body");
+      return;
+    }
+
+    const output = await analyzeText(input);
+    res.json({ output });
+  })
+);
+'@ | Out-File -Encoding utf8 src\index.ts -Force
+
+# 6) Install deps
+Say "Installing functions dependencies ..."
+npm install
+
+# 7) Build functions
+Say "Building functions (tsc) ..."
+npm run build
+
+Pop-Location
+
+# 8) Ensure firebase.json exists at repo root
+if (-not (Test-Path "firebase.json")) {
+@'
+{
+  "functions": {
+    "source": "functions"
+  }
+}
+'@ | Out-File -Encoding utf8 firebase.json -Force
+  Say "Created firebase.json"
+}
+
+# 9) Deploy functions
+Say "Deploying functions (firebase deploy --only functions) ..." "Yellow"
+firebase use $ProjectId | Out-Null
+firebase deploy --only functions
+
+# 10) Print post-steps & env wiring
+Say "`n✅ Done.Your analyze endpoint should now allow CORS from: " "Green"
+Say "   - $FrontendOrigin"
+Say "   - $LocalOrigin"
+Say "Endpoint: $FunctionsUrlBase/analyze`n"
+
+Say "Next steps:" "Yellow"
+Say "1) In your frontend .env (Vercel project Settings → Environment Variables), set:"
+Say "     VITE_FUNCTIONS_BASE_URL=$FunctionsUrlBase"
+Say "   And ensure your code calls POST `${VITE_FUNCTIONS_BASE_URL}/analyze` with JSON { input }"
+Say ""
+Say "2) Firebase Auth → Authentication → Settings → Authorized domains:"
+Say "     Add: $FrontendOrigin (domain only, no protocol path)"
+Say "     Example to add: auraai-live-2309dqam1-phillips-projects-8e47c9d9.vercel.app"
+Say ""
+Say "3) Local test (PowerShell):"
+Say "   curl -X POST `"$FunctionsUrlBase / analyze`" -H `"Content-Type: application/json`" - d`"{`"input`": `"hello from aura`"}`""
+Say ""
+Say "If frontend still errors, paste the exact console block; I'll patch surgically." "Cyan"
